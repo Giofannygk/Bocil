@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memories - IO & Bocil</title>
+    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime&family=Dancing+Script&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="cursor-dot"></div>
+    <div id="cursor-circle"></div>
+
+    <div id="overlay">
+        <h1>The Archive of Us</h1>
+        <p>Untuk Bocil Aku...</p>
+        <button id="startButton" class="interactable">MASUK</button>
+    </div>
+
+    <div id="lyrics-container">
+        <div id="lyric-text"></div>
+    </div>
+
+    <div id="webgl-container"></div>
+    <div id="css-container"></div>
+
+    <audio id="music" loop>
+        <source src="Elmatu - Aku Yang Salah (Lirik Video).mp3" type="audio/mpeg">
+    </audio>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.126.0/build/three.module.js';
+        import { CSS3DRenderer, CSS3DObject } from 'https://unpkg.com/three@0.126.0/examples/jsm/renderers/CSS3DRenderer.js';
+        import { OrbitControls } from 'https://unpkg.com/three@0.126.0/examples/jsm/controls/OrbitControls.js';
+        import { TWEEN } from 'https://unpkg.com/three@0.126.0/examples/jsm/libs/tween.module.min.js';
+
+        let camera, sceneGL, rendererGL, sceneCSS, rendererCSS, controls;
+        let particlesGroup, photoObjects = [], criticalPositions = []; 
+
+        let targetZoomDistance = 4500; 
+        let currentZoomDistance = 4500;
+        let zoomVelocity = 0; 
+        const FRICTION = 0.92; 
+        const SENSITIVITY = 0.15; 
+        const LERP_FACTOR = 0.05; 
+        const MIN_ZOOM = 100;
+        const MAX_ZOOM = 30000;
+        let isFocusing = false;
+
+        const totalFoto = 134; 
+        const photos = [];
+        for (let i = 1; i <= totalFoto; i++) {
+            photos.push(`foto/img (${i}).JPG`);
+        }
+        const displayPhotos = photos; 
+
+        const lyricsData = [
+            { time: 0, text: "" }, 
+            
+            // Verse 1
+            { time: 17.5, text: "Sejak pertama kita" },
+            { time: 25.5, text: "Menjalin kisah cinta" },
+            { time: 34.0, text: "Tak ada yang bisa" },
+            { time: 42.5, text: "Merubah kisah kita..." },
+
+            // Interlude 
+            { time: 48.0, text: "..." }, 
+            
+            // Pre-Chorus
+            { time: 50.0, text: "Ternyata" }, 
+            { time: 53.0, text: "Aku salah..." },
+            { time: 58.5, text: "Iman yang berbicara." },
+            { time: 66.0, text: "Tolong aku Tuhan." },
+            { time: 73.0, text: "Mengapa semuanya terjadi..." },
+            // Interlude 
+            { time: 80.0, text: "..." }, 
+            // Chorus 1
+            { time: 84.5, text: "Tolong tanyakan pada Tuhanmu" },
+            { time: 91.0, text: "Bolehkah aku yang bukan umat-Nya" },
+            { time: 96.5, text: "Mencintai hamba-Nya" },
+            { time: 101.0, text: "Bila memang cinta ini salah," },
+            { time: 106.5, text: "Mengapa kita yang harus terjatuh" },
+            { time: 112.5, text: "Terlalu dalam..." },
+            
+            // Interlude
+            { time: 120.0, text: "..." }, 
+            
+            // Chorus
+            { time: 151.0, text: "Bolehkah ku..." },
+            { time: 159.5, text: "Bolehkah aku yang bukan umat-Nya" },
+            { time: 167.5, text: "Bila memang cinta ini salah" },
+            { time: 182.5, text: "Mengapa kita yang harus terjatuh" },
+            { time: 192.5, text: "Terlalu dalam..." },
+            { time: 199.5, text: "..." }, 
+
+            // Ending
+            { time: 202.5, text: "Ternyata..." },
+            { time: 205.0, text: "Beta salah..." },
+            
+            // Selesai
+            { time: 207.0, text: "Love you Bocil..." } 
+        ];
+
+        const whispers = [
+            "Bocil na aku...", "Inget aku terus yaa", "Jangan benci aku ya cantik...", 
+            "Doa yang terbaik buat kamu.", "Aku beneran sayangg sama kamuu.", 
+            "Bocil & Io", "Bahagia terus yaa..", "Selamanya..."
+        ];
+        
+        const WORLD_SIZE = 12000; 
+        const CLEAN_THEME_COLOR = 0xf8f8f2; 
+
+        // Cursor Setup
+        const cursorDot = document.getElementById('cursor-dot');
+        const cursorCircle = document.getElementById('cursor-circle');
+        let mouseX = 0, mouseY = 0; 
+        let cursorX = 0, cursorY = 0; 
+
+        document.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            cursorDot.style.left = mouseX + 'px';
+            cursorDot.style.top = mouseY + 'px';
+        });
+
+        const handleHover = () => document.body.classList.add('cursor-hover');
+        const handleLeave = () => document.body.classList.remove('cursor-hover');
+        
+        document.querySelectorAll('.interactable').forEach(el => {
+            el.addEventListener('mouseenter', handleHover);
+            el.addEventListener('mouseleave', handleLeave);
+        });
+
+        init();
+        animate();
+
+        function init() {
+            const webglContainer = document.getElementById('webgl-container');
+            const cssContainer = document.getElementById('css-container');
+
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 40000);
+            camera.position.set(0, 0, currentZoomDistance);
+
+            sceneGL = new THREE.Scene();
+            sceneGL.fog = new THREE.FogExp2(CLEAN_THEME_COLOR, 0.00015); 
+
+            rendererGL = new THREE.WebGLRenderer({ antialias: false, alpha: true }); 
+            rendererGL.setClearColor(CLEAN_THEME_COLOR, 1);
+            rendererGL.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); 
+            rendererGL.setSize(window.innerWidth, window.innerHeight);
+            rendererGL.shadowMap.enabled = false; 
+            webglContainer.appendChild(rendererGL.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            sceneGL.add(ambientLight);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.5); 
+            dirLight.position.set(0, 3000, 3000);
+            dirLight.castShadow = false; 
+            sceneGL.add(dirLight);
+
+            createParticles();
+
+            sceneCSS = new THREE.Scene();
+            rendererCSS = new CSS3DRenderer();
+            rendererCSS.setSize(window.innerWidth, window.innerHeight);
+            rendererCSS.domElement.style.position = 'absolute';
+            rendererCSS.domElement.style.top = '0';
+            cssContainer.appendChild(rendererCSS.domElement);
+
+            createPhotoCloud();
+            createWhispers();
+
+            controls = new OrbitControls(camera, rendererCSS.domElement);
+            controls.enableDamping = true; 
+            controls.dampingFactor = 0.05; 
+            controls.rotateSpeed = 0.3;    
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.3; 
+            controls.enablePan = true; 
+            controls.enableZoom = false; 
+            
+            window.addEventListener('wheel', onMouseWheel, { passive: false });
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onMouseWheel(event) {
+            if(isFocusing) return;
+            event.preventDefault();
+            zoomVelocity += event.deltaY * SENSITIVITY;
+        }
+
+        function getDenseRandom(iterations = 2) { 
+            let sum = 0;
+            for(let i = 0; i < iterations; i++) sum += Math.random();
+            return (sum / iterations) - 0.5;
+        }
+
+        function createParticles() {
+            particlesGroup = new THREE.Group();
+            sceneGL.add(particlesGroup);
+            
+            const geometry = new THREE.BoxGeometry(25, 25, 25); 
+            const material = new THREE.MeshLambertMaterial({ color: 0xcccccc, transparent: true, opacity: 0.45 });
+
+            const particleCount = 1500; 
+
+            for (let i = 0; i < particleCount; i++) { 
+                const particle = new THREE.Mesh(geometry, material);
+                const spreadMultiplier = 5.0; 
+                
+                particle.position.set(
+                    getDenseRandom(3) * WORLD_SIZE * spreadMultiplier, 
+                    getDenseRandom(3) * WORLD_SIZE * spreadMultiplier, 
+                    getDenseRandom(3) * WORLD_SIZE * spreadMultiplier
+                );
+
+                particle.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0);
+                particle.castShadow = false; 
+                particle.receiveShadow = false;
+                
+                particle.userData.velocity = new THREE.Vector3((Math.random()-0.5)*0.6, (Math.random()-0.5)*0.6, (Math.random()-0.5)*0.6);
+                particle.userData.rotSpeed = (Math.random()-0.5)*0.008;
+                particlesGroup.add(particle);
+            }
+        }
+
+        function createPhotoCloud() {
+            const spread = 3500; 
+            const MIN_DISTANCE = 300; 
+
+            for (let i = 0; i < displayPhotos.length; i++) {
+                const element = document.createElement('div');
+                element.className = 'element interactable';
+                element.addEventListener('mouseenter', handleHover);
+                element.addEventListener('mouseleave', handleLeave);
+
+                const card = document.createElement('div');
+                card.className = 'card';
+                
+                const img = document.createElement('img');
+                img.src = displayPhotos[i];
+                img.loading = "lazy"; 
+                img.onerror = function() { 
+                    this.parentElement.style.display = 'none';
+                };
+                
+                card.appendChild(img);
+                
+                const caption = document.createElement('div');
+                caption.className = 'caption';
+                caption.innerText = '#' + (i + 1);
+                card.appendChild(caption);
+                
+                element.appendChild(card);
+                const objectCSS = new CSS3DObject(element);
+                
+                let posX, posY, posZ;
+                let attempts = 0;
+                let safePosition = false;
+                const maxAttempts = 50; 
+
+                do {
+                    posX = getDenseRandom(3) * spread * 3;
+                    posY = getDenseRandom(3) * spread * 3;
+                    posZ = getDenseRandom(3) * spread * 3;
+                    
+                    safePosition = true;
+                    for(let existingPos of criticalPositions) {
+                        const dist = new THREE.Vector3(posX, posY, posZ).distanceTo(existingPos);
+                        if(dist < MIN_DISTANCE) {
+                            safePosition = false;
+                            break;
+                        }
+                    }
+                    attempts++;
+                } while (!safePosition && attempts < maxAttempts);
+
+                objectCSS.position.set(posX, posY, posZ);
+                criticalPositions.push(new THREE.Vector3(posX, posY, posZ));
+                
+                objectCSS.rotation.set((Math.random()-0.5)*0.5, (Math.random()-0.5)*1.5, (Math.random()-0.5)*0.5);
+
+                objectCSS.userData = {
+                    originalScale: 1,
+                    originalRotX: objectCSS.rotation.x,
+                    originalRotY: objectCSS.rotation.y,
+                    originalRotZ: objectCSS.rotation.z,
+                    phase: Math.random() * Math.PI * 2, 
+                    speed: 0.5 + Math.random() * 0.5
+                };
+
+                photoObjects.push(objectCSS);
+                sceneCSS.add(objectCSS);
+
+                card.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    focusOnPhoto(objectCSS);
+                });
+            }
+        }
+
+        function createWhispers() {
+            const spread = 3000;
+            const MIN_DISTANCE = 250; 
+
+            for (let i = 0; i < 50; i++) {
+                const text = whispers[Math.floor(Math.random() * whispers.length)];
+                const element = document.createElement('div');
+                element.className = 'whisper-element';
+                element.textContent = text;
+                element.style.fontSize = (16 + Math.random() * 20) + 'px';
+                element.style.opacity = 0.4 + Math.random() * 0.4;
+
+                const objectCSS = new CSS3DObject(element);
+
+                let posX, posY, posZ;
+                let attempts = 0;
+                let safePosition = false;
+                const maxAttempts = 50;
+
+                 do {
+                    posX = getDenseRandom(3) * spread * 2.5;
+                    posY = getDenseRandom(3) * spread * 2.5;
+                    posZ = getDenseRandom(3) * spread * 2.5;
+                    
+                    safePosition = true;
+                    for(let existingPos of criticalPositions) {
+                        const dist = new THREE.Vector3(posX, posY, posZ).distanceTo(existingPos);
+                        if(dist < MIN_DISTANCE) {
+                            safePosition = false;
+                            break;
+                        }
+                    }
+                    attempts++;
+                } while (!safePosition && attempts < maxAttempts);
+
+                objectCSS.position.set(posX, posY, posZ);
+                criticalPositions.push(new THREE.Vector3(posX, posY, posZ));
+
+                objectCSS.rotation.set((Math.random()-0.5)*1, (Math.random()-0.5)*1, (Math.random()-0.5)*1);
+                sceneCSS.add(objectCSS);
+            }
+        }
+
+        function focusOnPhoto(targetObject) {
+            if (isFocusing) return;
+            isFocusing = true;
+            controls.enabled = false;
+
+            const direction = new THREE.Vector3().copy(targetObject.position).normalize();
+            const targetCameraPos = new THREE.Vector3().copy(targetObject.position).add(direction.multiplyScalar(300));
+
+            new TWEEN.Tween(camera.position)
+                .to({ x: targetCameraPos.x, y: targetCameraPos.y, z: targetCameraPos.z }, 2000)
+                .easing(TWEEN.Easing.Quadratic.InOut) 
+                .start();
+
+            new TWEEN.Tween(controls.target)
+                .to({ x: targetObject.position.x, y: targetObject.position.y, z: targetObject.position.z }, 2000)
+                .easing(TWEEN.Easing.Quadratic.InOut)
+                .onComplete(() => {
+                    setTimeout(() => {
+                        isFocusing = false;
+                        controls.enabled = true;
+                        targetZoomDistance = camera.position.distanceTo(controls.target);
+                    }, 2000);
+                })
+                .start();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            rendererGL.setSize(window.innerWidth, window.innerHeight);
+            rendererCSS.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            TWEEN.update();
+            controls.update(); 
+            
+            const time = Date.now() * 0.001;
+
+            photoObjects.forEach((obj) => {
+                const scaleVariation = Math.sin(time * obj.userData.speed + obj.userData.phase) * 0.03; 
+                const currentScale = obj.userData.originalScale + scaleVariation;
+                obj.scale.set(currentScale, currentScale, currentScale);
+                obj.rotation.z = obj.userData.originalRotZ + (scaleVariation * 0.5);
+            });
+
+            cursorX += (mouseX - cursorX) * 0.2; 
+            cursorY += (mouseY - cursorY) * 0.2;
+            cursorCircle.style.left = cursorX + 'px';
+            cursorCircle.style.top = cursorY + 'px';
+
+            if (!isFocusing) {
+                targetZoomDistance += zoomVelocity;
+                zoomVelocity *= FRICTION; 
+                targetZoomDistance = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetZoomDistance));
+
+                const dist = camera.position.distanceTo(controls.target);
+                if (Math.abs(targetZoomDistance - dist) > 0.5) {
+                    const newDist = THREE.MathUtils.lerp(dist, targetZoomDistance, LERP_FACTOR);
+                    const direction = new THREE.Vector3().copy(camera.position).sub(controls.target).normalize();
+                    camera.position.copy(controls.target).add(direction.multiplyScalar(newDist));
+                }
+            }
+
+            particlesGroup.children.forEach(p => {
+                p.position.add(p.userData.velocity);
+                if(Math.abs(p.position.x) > WORLD_SIZE*2.5) p.userData.velocity.x *= -1;
+                if(Math.abs(p.position.y) > WORLD_SIZE*2.5) p.userData.velocity.y *= -1;
+                if(Math.abs(p.position.z) > WORLD_SIZE*2.5) p.userData.velocity.z *= -1;
+            });
+            
+            rendererGL.render(sceneGL, camera);
+            rendererCSS.render(sceneCSS, camera);
+        }
+
+        const startButton = document.getElementById('startButton');
+        const overlay = document.getElementById('overlay');
+        const music = document.getElementById('music');
+        const lyricText = document.getElementById('lyric-text');
+
+        let currentLyricIndex = 0;
+
+        startButton.addEventListener('click', () => {
+            overlay.style.opacity = '0';
+            setTimeout(() => { overlay.style.display = 'none'; }, 3000);
+            music.volume = 0.6; 
+            music.play().catch(e => console.log(e));
+            targetZoomDistance -= 1500; 
+        });
+
+        music.addEventListener('timeupdate', () => {
+            const currentTime = music.currentTime;
+            let activeLyric = "";
+            
+            for (let i = 0; i < lyricsData.length; i++) {
+                if (currentTime >= lyricsData[i].time) {
+                    if (i === lyricsData.length - 1 || currentTime < lyricsData[i+1].time) {
+                        activeLyric = lyricsData[i].text;
+                        break; 
+                    }
+                }
+            }
+
+            if (lyricText.innerText !== activeLyric) {
+                if(activeLyric === "") {
+                    lyricText.classList.remove('visible');
+                    setTimeout(() => { if(!lyricText.classList.contains('visible')) lyricText.innerText = ""; }, 300);
+                } else {
+                    lyricText.classList.remove('visible');
+                    setTimeout(() => {
+                        lyricText.innerText = activeLyric;
+                        lyricText.classList.add('visible');
+                    }, 300); 
+                }
+            }
+        });
+
+    </script>
+</body>
+</html>
