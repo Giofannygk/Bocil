@@ -2,10 +2,105 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Memories - IO & Bocil</title>
     <link href="https://fonts.googleapis.com/css2?family=Courier+Prime&family=Dancing+Script&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <style>
+        /* --- ESTETIKA DASAR --- */
+        body {
+            margin: 0;
+            background-color: #f8f8f2; 
+            overflow: hidden;
+            font-family: 'Courier Prime', monospace;
+            color: #5a4a42;
+            /* Default kursor hilang untuk desktop */
+            cursor: none; 
+            /* Mencegah select text tidak sengaja di HP */
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none; /* Penting untuk gesture */
+        }
+
+        #webgl-container { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; }
+        #css-container { position: absolute; top: 0; left: 0; z-index: 2; width: 100%; height: 100%; }
+
+        /* --- CUSTOM CURSOR (Hanya tampil di Desktop) --- */
+        #cursor-dot, #cursor-circle {
+            position: fixed; top: 0; left: 0;
+            transform: translate(-50%, -50%); border-radius: 50%;
+            z-index: 9999; pointer-events: none; 
+        }
+        #cursor-dot { width: 8px; height: 8px; background-color: #5a4a42; }
+        #cursor-circle {
+            width: 40px; height: 40px; border: 1.5px solid #5a4a42;
+            transition: width 0.3s, height 0.3s; opacity: 0.6;
+        }
+        .cursor-hover #cursor-circle { width: 60px; height: 60px; background-color: rgba(90, 74, 66, 0.1); border-color: transparent; }
+
+        /* --- Sembunyikan Kursor Custom di HP/Tablet --- */
+        @media (hover: none) and (pointer: coarse) {
+            #cursor-dot, #cursor-circle { display: none; }
+            body { cursor: auto; } /* Balikin kursor default sistem */
+            /* Perbesar tombol agar mudah ditekan jari */
+            #startButton { padding: 20px 60px !important; font-size: 1.5rem !important; } 
+        }
+
+        /* --- OVERLAY --- */
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(248, 248, 242, 0.98);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 999; transition: opacity 3s ease-out; color: #5a4a42;
+        }
+        h1 { font-family: 'Dancing Script', cursive; font-size: 3.5rem; margin-bottom: 10px; text-align: center; padding: 0 20px; }
+        p { font-size: 1.1rem; font-style: italic; margin-bottom: 40px; text-align: center; color: #8c7b70; }
+        #startButton {
+            padding: 15px 50px; background: transparent; border: 2px solid #5a4a42; color: #5a4a42;
+            font-family: 'Courier Prime', monospace; font-size: 1.2rem; cursor: pointer; 
+            transition: transform 0.3s; border-radius: 50px; letter-spacing: 2px;
+            /* Pastikan tombol bisa diklik di atas layer lain */
+            position: relative; z-index: 1000;
+        }
+
+        /* --- LIRIK --- */
+        #lyrics-container {
+            position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+            width: 90%; text-align: center; z-index: 100; pointer-events: none; 
+            text-shadow: 0px 0px 15px rgba(248, 248, 242, 1);
+        }
+        #lyric-text {
+            font-family: 'Dancing Script', cursive; font-size: 1.8rem; color: #5a4a42;
+            transition: opacity 0.3s ease-in-out, transform 0.3s ease-out;
+            opacity: 0; transform: translateY(15px);
+        }
+        #lyric-text.visible { opacity: 1; transform: translateY(0); }
+
+        /* --- FOTO --- */
+        .element { width: 180px; height: 240px; cursor: pointer; perspective: 800px; }
+        .card {
+            width: 100%; height: 100%; background-color: #ffffff; 
+            border: 8px solid #ffffff; border-bottom: 30px solid #ffffff;
+            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+            transition: transform 0.5s; 
+            display: flex; flex-direction: column; align-items: center;
+            box-sizing: border-box; backface-visibility: hidden;
+            /* Agar sentuhan di HP terdeteksi dengan baik */
+            touch-action: manipulation; 
+        }
+        .card img {
+            width: 100%; height: 100%; object-fit: cover;
+            filter: sepia(0.2); pointer-events: none; image-rendering: auto; 
+        }
+        .card .caption {
+            position: absolute; bottom: -25px; left: 0; width: 100%;
+            text-align: center; font-size: 12px; color: #888;
+            pointer-events: none; font-family: 'Courier Prime', monospace;
+        }
+        .whisper-element {
+            font-family: 'Dancing Script', cursive; color: #5a4a42;
+            font-size: 24px; pointer-events: none; white-space: nowrap;
+        }
+    </style>
 </head>
 <body>
     <div id="cursor-dot"></div>
@@ -24,7 +119,7 @@
     <div id="webgl-container"></div>
     <div id="css-container"></div>
 
-    <audio id="music" loop>
+    <audio id="music" loop playsinline>
         <source src="Elmatu - Aku Yang Salah (Lirik Video).mp3" type="audio/mpeg">
     </audio>
 
@@ -47,71 +142,59 @@
         const MAX_ZOOM = 30000;
         let isFocusing = false;
 
+        // Variabel untuk Zoom Touch (Cubit)
+        let touchStartDistance = 0;
+        let isTouching = false;
+
+        // --- KONFIGURASI FOTO ---
         const totalFoto = 134; 
         const photos = [];
         for (let i = 1; i <= totalFoto; i++) {
+            // Support 2 kemungkinan nama file (antisipasi beda format di HP)
             photos.push(`foto/img (${i}).JPG`);
             photos.push(`foto/${i}.jpg`);
         }
+        // Kita filter yang valid nanti saat load, atau biarkan CSS menghandle error
         const displayPhotos = photos; 
 
+        // --- LIRIK ---
         const lyricsData = [
             { time: 0, text: "" }, 
-            
-            // Verse 1
             { time: 17.5, text: "Sejak pertama kita" },
             { time: 25.5, text: "Menjalin kisah cinta" },
             { time: 34.0, text: "Tak ada yang bisa" },
             { time: 42.5, text: "Merubah kisah kita..." },
-
-            // Interlude 
             { time: 48.0, text: "..." }, 
-            
-            // Pre-Chorus
             { time: 50.0, text: "Ternyata" }, 
             { time: 53.0, text: "Aku salah..." },
             { time: 58.5, text: "Iman yang berbicara." },
             { time: 66.0, text: "Tolong aku Tuhan." },
             { time: 73.0, text: "Mengapa semuanya terjadi..." },
-            // Interlude 
             { time: 80.0, text: "..." }, 
-            // Chorus 1
             { time: 84.5, text: "Tolong tanyakan pada Tuhanmu" },
             { time: 91.0, text: "Bolehkah aku yang bukan umat-Nya" },
             { time: 96.5, text: "Mencintai hamba-Nya" },
             { time: 101.0, text: "Bila memang cinta ini salah," },
             { time: 106.5, text: "Mengapa kita yang harus terjatuh" },
             { time: 112.5, text: "Terlalu dalam..." },
-            
-            // Interlude
             { time: 120.0, text: "..." }, 
-            
-            // Chorus
             { time: 151.0, text: "Bolehkah ku..." },
             { time: 159.5, text: "Bolehkah aku yang bukan umat-Nya" },
             { time: 167.5, text: "Bila memang cinta ini salah" },
             { time: 182.5, text: "Mengapa kita yang harus terjatuh" },
             { time: 192.5, text: "Terlalu dalam..." },
             { time: 199.5, text: "..." }, 
-
-            // Ending
             { time: 202.5, text: "Ternyata..." },
             { time: 205.0, text: "Beta salah..." },
-            
-            // Selesai
             { time: 207.0, text: "Love you Bocil..." } 
         ];
 
-        const whispers = [
-            "Bocil na aku...", "Inget aku terus yaa", "Jangan benci aku ya cantik...", 
-            "Doa yang terbaik buat kamu.", "Aku beneran sayangg sama kamuu.", 
-            "Bocil & Io", "Bahagia terus yaa..", "Selamanya..."
-        ];
+        const whispers = ["Bocil na aku...", "Inget aku terus yaa", "Jangan benci aku ya cantik...", "Doa yang terbaik buat kamu.", "Aku beneran sayangg sama kamuu.", "Bocil & Io", "Bahagia terus yaa..", "Selamanya..."];
         
         const WORLD_SIZE = 12000; 
         const CLEAN_THEME_COLOR = 0xf8f8f2; 
 
-        // Cursor Setup
+        // --- CURSOR (Hanya aktif di desktop lewat CSS) ---
         const cursorDot = document.getElementById('cursor-dot');
         const cursorCircle = document.getElementById('cursor-circle');
         let mouseX = 0, mouseY = 0; 
@@ -167,6 +250,8 @@
             rendererCSS.setSize(window.innerWidth, window.innerHeight);
             rendererCSS.domElement.style.position = 'absolute';
             rendererCSS.domElement.style.top = '0';
+            // Penting: touch-action none agar browser tidak ikut scroll halaman saat user swipe
+            rendererCSS.domElement.style.touchAction = 'none'; 
             cssContainer.appendChild(rendererCSS.domElement);
 
             createPhotoCloud();
@@ -175,20 +260,61 @@
             controls = new OrbitControls(camera, rendererCSS.domElement);
             controls.enableDamping = true; 
             controls.dampingFactor = 0.05; 
-            controls.rotateSpeed = 0.3;    
+            controls.rotateSpeed = 0.5; // Lebih sensitif di HP   
             controls.autoRotate = true;
-            controls.autoRotateSpeed = 0.3; 
+            controls.autoRotateSpeed = 0.5; 
             controls.enablePan = true; 
-            controls.enableZoom = false; 
+            controls.enableZoom = false; // Kita pakai custom zoom
             
+            // Event Listeners
             window.addEventListener('wheel', onMouseWheel, { passive: false });
             window.addEventListener('resize', onWindowResize);
+            
+            // --- EVENT LISTENER KHUSUS HP (TOUCH) ---
+            window.addEventListener('touchstart', onTouchStart, { passive: false });
+            window.addEventListener('touchmove', onTouchMove, { passive: false });
+            window.addEventListener('touchend', () => { isTouching = false; }, { passive: false });
         }
 
+        // --- LOGIKA ZOOM UNTUK MOUSE ---
         function onMouseWheel(event) {
             if(isFocusing) return;
             event.preventDefault();
             zoomVelocity += event.deltaY * SENSITIVITY;
+        }
+
+        // --- LOGIKA ZOOM UNTUK HP (PINCH) ---
+        function onTouchStart(event) {
+            if (event.touches.length === 2) {
+                isTouching = true;
+                // Hitung jarak awal dua jari
+                const dx = event.touches[0].pageX - event.touches[1].pageX;
+                const dy = event.touches[0].pageY - event.touches[1].pageY;
+                touchStartDistance = Math.sqrt(dx * dx + dy * dy);
+            }
+        }
+
+        function onTouchMove(event) {
+            if (isFocusing) return;
+            
+            if (event.touches.length === 2 && isTouching) {
+                event.preventDefault(); // Matikan zoom browser native
+                
+                // Hitung jarak baru
+                const dx = event.touches[0].pageX - event.touches[1].pageX;
+                const dy = event.touches[0].pageY - event.touches[1].pageY;
+                const currentDistance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Jika jarak membesar (spread) -> Zoom In (Maju)
+                // Jika jarak mengecil (pinch) -> Zoom Out (Mundur)
+                const delta = touchStartDistance - currentDistance;
+                
+                // Update velocity (multiplier 5 agar responsif di HP)
+                zoomVelocity += delta * 5; 
+                
+                // Simpan jarak terakhir
+                touchStartDistance = currentDistance;
+            }
         }
 
         function getDenseRandom(iterations = 2) { 
@@ -203,23 +329,17 @@
             
             const geometry = new THREE.BoxGeometry(25, 25, 25); 
             const material = new THREE.MeshLambertMaterial({ color: 0xcccccc, transparent: true, opacity: 0.45 });
-
-            const particleCount = 1500; 
+            const particleCount = 1000; // Dikurangi sedikit untuk performa HP
 
             for (let i = 0; i < particleCount; i++) { 
                 const particle = new THREE.Mesh(geometry, material);
                 const spreadMultiplier = 5.0; 
-                
                 particle.position.set(
                     getDenseRandom(3) * WORLD_SIZE * spreadMultiplier, 
                     getDenseRandom(3) * WORLD_SIZE * spreadMultiplier, 
                     getDenseRandom(3) * WORLD_SIZE * spreadMultiplier
                 );
-
                 particle.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0);
-                particle.castShadow = false; 
-                particle.receiveShadow = false;
-                
                 particle.userData.velocity = new THREE.Vector3((Math.random()-0.5)*0.6, (Math.random()-0.5)*0.6, (Math.random()-0.5)*0.6);
                 particle.userData.rotSpeed = (Math.random()-0.5)*0.008;
                 particlesGroup.add(particle);
@@ -233,8 +353,13 @@
             for (let i = 0; i < displayPhotos.length; i++) {
                 const element = document.createElement('div');
                 element.className = 'element interactable';
-                element.addEventListener('mouseenter', handleHover);
-                element.addEventListener('mouseleave', handleLeave);
+                
+                // Touch start untuk fix klik di HP (Kadang click event kalah sama drag controls)
+                element.addEventListener('touchstart', function(e) {
+                   // Logika sederhana: jika tap singkat, anggap klik. Jika tahan lama/geser, anggap drag.
+                   this.setAttribute('data-touch-start-x', e.changedTouches[0].clientX);
+                   this.setAttribute('data-touch-start-y', e.changedTouches[0].clientY);
+                }, {passive: true});
 
                 const card = document.createElement('div');
                 card.className = 'card';
@@ -242,10 +367,7 @@
                 const img = document.createElement('img');
                 img.src = displayPhotos[i];
                 img.loading = "lazy"; 
-                img.onerror = function() { 
-                    this.parentElement.style.display = 'none';
-                };
-                
+                img.onerror = function() { this.parentElement.style.display = 'none'; };
                 card.appendChild(img);
                 
                 const caption = document.createElement('div');
@@ -256,22 +378,18 @@
                 element.appendChild(card);
                 const objectCSS = new CSS3DObject(element);
                 
-                let posX, posY, posZ;
-                let attempts = 0;
-                let safePosition = false;
-                const maxAttempts = 50; 
+                // Logic Posisi (sama seperti sebelumnya)
+                let posX, posY, posZ, attempts = 0, safePosition = false;
+                const maxAttempts = 30; // Kurangi attempt agar load cepat di HP
 
                 do {
                     posX = getDenseRandom(3) * spread * 3;
                     posY = getDenseRandom(3) * spread * 3;
                     posZ = getDenseRandom(3) * spread * 3;
-                    
                     safePosition = true;
                     for(let existingPos of criticalPositions) {
-                        const dist = new THREE.Vector3(posX, posY, posZ).distanceTo(existingPos);
-                        if(dist < MIN_DISTANCE) {
-                            safePosition = false;
-                            break;
+                        if(new THREE.Vector3(posX, posY, posZ).distanceTo(existingPos) < MIN_DISTANCE) {
+                            safePosition = false; break;
                         }
                     }
                     attempts++;
@@ -279,21 +397,34 @@
 
                 objectCSS.position.set(posX, posY, posZ);
                 criticalPositions.push(new THREE.Vector3(posX, posY, posZ));
-                
                 objectCSS.rotation.set((Math.random()-0.5)*0.5, (Math.random()-0.5)*1.5, (Math.random()-0.5)*0.5);
 
                 objectCSS.userData = {
-                    originalScale: 1,
-                    originalRotX: objectCSS.rotation.x,
-                    originalRotY: objectCSS.rotation.y,
-                    originalRotZ: objectCSS.rotation.z,
-                    phase: Math.random() * Math.PI * 2, 
-                    speed: 0.5 + Math.random() * 0.5
+                    originalScale: 1, originalRotX: objectCSS.rotation.x, originalRotY: objectCSS.rotation.y, originalRotZ: objectCSS.rotation.z,
+                    phase: Math.random() * Math.PI * 2, speed: 0.5 + Math.random() * 0.5
                 };
-
                 photoObjects.push(objectCSS);
                 sceneCSS.add(objectCSS);
 
+                // --- LOGIKA KLIK KOMPATIBEL HP & DESKTOP ---
+                // Menggunakan 'touchend' untuk HP agar lebih responsif daripada 'click'
+                card.addEventListener('touchend', function(e) {
+                    const startX = parseFloat(element.getAttribute('data-touch-start-x'));
+                    const startY = parseFloat(element.getAttribute('data-touch-start-y'));
+                    const endX = e.changedTouches[0].clientX;
+                    const endY = e.changedTouches[0].clientY;
+                    
+                    // Hitung jarak geser. Jika geser dikit (<10px), anggap klik. Jika banyak, anggap drag kamera.
+                    const dist = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
+                    
+                    if (dist < 10) {
+                        e.stopPropagation();
+                        e.preventDefault(); // Mencegah double firing dengan click
+                        focusOnPhoto(objectCSS);
+                    }
+                });
+
+                // Fallback untuk desktop mouse click
                 card.addEventListener('click', function(e) {
                     e.stopPropagation();
                     focusOnPhoto(objectCSS);
@@ -304,41 +435,25 @@
         function createWhispers() {
             const spread = 3000;
             const MIN_DISTANCE = 250; 
-
-            for (let i = 0; i < 50; i++) {
+            for (let i = 0; i < 30; i++) {
                 const text = whispers[Math.floor(Math.random() * whispers.length)];
                 const element = document.createElement('div');
                 element.className = 'whisper-element';
                 element.textContent = text;
                 element.style.fontSize = (16 + Math.random() * 20) + 'px';
                 element.style.opacity = 0.4 + Math.random() * 0.4;
-
                 const objectCSS = new CSS3DObject(element);
-
-                let posX, posY, posZ;
-                let attempts = 0;
-                let safePosition = false;
-                const maxAttempts = 50;
-
-                 do {
-                    posX = getDenseRandom(3) * spread * 2.5;
-                    posY = getDenseRandom(3) * spread * 2.5;
-                    posZ = getDenseRandom(3) * spread * 2.5;
-                    
+                let posX, posY, posZ, attempts = 0, safePosition = false;
+                do {
+                    posX = getDenseRandom(3) * spread * 2.5; posY = getDenseRandom(3) * spread * 2.5; posZ = getDenseRandom(3) * spread * 2.5;
                     safePosition = true;
                     for(let existingPos of criticalPositions) {
-                        const dist = new THREE.Vector3(posX, posY, posZ).distanceTo(existingPos);
-                        if(dist < MIN_DISTANCE) {
-                            safePosition = false;
-                            break;
-                        }
+                        if(new THREE.Vector3(posX, posY, posZ).distanceTo(existingPos) < MIN_DISTANCE) { safePosition = false; break; }
                     }
                     attempts++;
-                } while (!safePosition && attempts < maxAttempts);
-
+                } while (!safePosition && attempts < 30);
                 objectCSS.position.set(posX, posY, posZ);
                 criticalPositions.push(new THREE.Vector3(posX, posY, posZ));
-
                 objectCSS.rotation.set((Math.random()-0.5)*1, (Math.random()-0.5)*1, (Math.random()-0.5)*1);
                 sceneCSS.add(objectCSS);
             }
@@ -350,22 +465,23 @@
             controls.enabled = false;
 
             const direction = new THREE.Vector3().copy(targetObject.position).normalize();
-            const targetCameraPos = new THREE.Vector3().copy(targetObject.position).add(direction.multiplyScalar(300));
+            // Jarak fokus disesuaikan agar pas di layar HP
+            const targetCameraPos = new THREE.Vector3().copy(targetObject.position).add(direction.multiplyScalar(500)); 
 
             new TWEEN.Tween(camera.position)
-                .to({ x: targetCameraPos.x, y: targetCameraPos.y, z: targetCameraPos.z }, 2000)
+                .to({ x: targetCameraPos.x, y: targetCameraPos.y, z: targetCameraPos.z }, 1500)
                 .easing(TWEEN.Easing.Quadratic.InOut) 
                 .start();
 
             new TWEEN.Tween(controls.target)
-                .to({ x: targetObject.position.x, y: targetObject.position.y, z: targetObject.position.z }, 2000)
+                .to({ x: targetObject.position.x, y: targetObject.position.y, z: targetObject.position.z }, 1500)
                 .easing(TWEEN.Easing.Quadratic.InOut)
                 .onComplete(() => {
                     setTimeout(() => {
                         isFocusing = false;
                         controls.enabled = true;
                         targetZoomDistance = camera.position.distanceTo(controls.target);
-                    }, 2000);
+                    }, 1000); // Waktu tunggu dikurangi
                 })
                 .start();
         }
@@ -435,10 +551,16 @@
             targetZoomDistance -= 1500; 
         });
 
+        // Pastikan Audio juga jalan di iOS (kadang butuh interaksi user extra)
+        document.body.addEventListener('touchstart', function() {
+            if(music.paused && overlay.style.display === 'none') {
+                music.play();
+            }
+        }, {once:true});
+
         music.addEventListener('timeupdate', () => {
             const currentTime = music.currentTime;
             let activeLyric = "";
-            
             for (let i = 0; i < lyricsData.length; i++) {
                 if (currentTime >= lyricsData[i].time) {
                     if (i === lyricsData.length - 1 || currentTime < lyricsData[i+1].time) {
@@ -447,7 +569,6 @@
                     }
                 }
             }
-
             if (lyricText.innerText !== activeLyric) {
                 if(activeLyric === "") {
                     lyricText.classList.remove('visible');
